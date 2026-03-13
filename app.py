@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import sys
+import uuid
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -8,9 +9,13 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 from models.llm import get_chatgroq_model
 from config.config import GROQ_API_KEY
-from utils.rag import load_and_index_documents, retrieve_relevant_docs
+from utils.rag import load_and_index_documents, retrieve_relevant_docs, get_session_paths
 from utils.web_search import perform_web_search
 from utils.prompts import get_system_prompt
+
+# ── Session Initialization ──────────────────────────────────────────
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())
 
 def get_chat_response(chat_model, messages, system_prompt):
     try:
@@ -33,7 +38,7 @@ def instructions_page():
     - **RAG** – answers from uploaded PDFs (schemes, resume guides, interview questions…)
     - **Live web search** – current job openings, news, salary trends (via Tavily)
     - **Concise / Detailed** response modes
-    - PDF upload & on-demand indexing
+    - PDF upload & on-demand indexing (Session-specific)
     - Source attribution
 
     ### Quick setup
@@ -52,22 +57,27 @@ def chat_page():
 
     chat_model = get_chatgroq_model()
 
+    # Get user-specific data directory
+    data_dir, _ = get_session_paths()
+
     # ── Sidebar ─────────────────────────────────────────────────────────
     with st.sidebar:
         st.subheader("Response Style")
         mode = st.radio("Choose mode", ["Concise", "Detailed"], index=1).lower()
 
         st.subheader("Knowledge Base (RAG)")
+        st.info("Your uploaded files are private to this session.")
         uploaded = st.file_uploader("Upload career PDFs", type="pdf", accept_multiple_files=True)
 
         if uploaded:
-            os.makedirs("data", exist_ok=True)
+            # Clear old files if any (optional, for clean start)
             for file in uploaded:
-                path = os.path.join("data", file.name)
+                path = os.path.join(data_dir, file.name)
                 with open(path, "wb") as f:
                     f.write(file.getvalue())
+            
             if st.button("Index / Re-index Documents"):
-                with st.spinner("Indexing documents..."):
+                with st.spinner("Indexing your documents..."):
                     vs = load_and_index_documents()
                     if vs is None:
                         st.warning("No documents found or indexing failed.")
@@ -95,12 +105,12 @@ def chat_page():
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 try:
-                    # RAG retrieval
+                    # RAG retrieval (session-specific)
                     docs = retrieve_relevant_docs(prompt, k=5)
                     context = "\n\n".join(d.page_content for d in docs) if docs else ""
                     sources = ""
                     if docs:
-                        sources = "**From documents:**\n" + "\n".join(
+                        sources = "**From your documents:**\n" + "\n".join(
                             f"• {os.path.basename(d.metadata.get('source','file'))}" for d in docs
                         ) + "\n\n"
 
